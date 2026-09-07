@@ -1,0 +1,68 @@
+# OSCAR 运行时配置(随仓库提交,直接使用;改动后运行 OSCAR 即生效)。
+# 本文件不含密钥:API key 只放根 .env(见 .env.example),如
+# DEEPSEEK_API_KEY=sk-...;本文件若出现 llm.api_key 会直接报错。
+#
+# 加载优先级(高 → 低):
+#   CLI 参数 > 环境变量 OSCAR_<段>_<字段> > 本文件 > 代码默认值
+# 例如 OSCAR_RETRIEVAL_TOP_K=5 python main.py ... 等价于把下方
+# retrieval.top_k 改成 5(列表字段如 issue_search_keywords 仅 yaml 可配)。
+
+# ---------------------------------------------------------------------------
+# LLM 调用配置(不含任何密钥)
+# ---------------------------------------------------------------------------
+llm:
+  provider: deepseek            # deepseek / openai / anthropic / openai_compatible
+  base_url: https://api.deepseek.com/v1
+  model: deepseek-v4-flash
+  temperature: 0.1
+  max_tokens: 16384
+  timeout: 120                  # 单次请求超时(秒)
+  structured_output_method: function_calling   # function_calling / json_mode
+
+# ---------------------------------------------------------------------------
+# 审计行为
+# ---------------------------------------------------------------------------
+audit:
+  cleanup_repo: false           # true = 审计后删除克隆仓库(默认保留便于复查)
+  max_clone_retries: 3
+  clone_timeout: 120            # 克隆超时(秒)
+  max_issues_to_fetch: 50
+  max_prs_to_fetch: 20
+  issue_search_keywords:
+    - training
+    - train
+    - evaluation
+    - eval
+    - release
+    - not released
+    - code release
+    - dataset
+    - checkpoint
+    - missing
+    - implementation
+    - issue
+    - copyright
+    - proprietary
+    - license
+
+# ---------------------------------------------------------------------------
+# 代码检索与证据接地阈值(改动影响送入 LLM 的代码窗口与裁决宽严;
+# 确定性验收/双跑字节一致请保持默认)
+# ---------------------------------------------------------------------------
+retrieval:
+  top_k: 12                     # hybrid 检索送入 LLM 的候选代码块数
+  max_chunks: 16                # hybrid + mapper 结构化召回合计上限
+  max_chunk_chars: 3500         # 每块代码截断长度(字符)
+  max_locations: 6              # 报告 evidence details 的定位上限
+  conf_cap: 0.85                # LLM 置信度上限(防过度自信)
+  degrade_conf_cap: 0.5         # LLM 不可用降级时的置信度封顶
+  rare_slots: 3                 # 稀有内容词扫描专用槽位数
+  mapper_min: 3                 # mapper 候选文件块保底
+  encode_batch: 32              # CodeBERT 编码批大小(CPU 内存护栏)
+
+# ---------------------------------------------------------------------------
+# 缓存有效期(秒)
+# ---------------------------------------------------------------------------
+cache:
+  ttl_seconds: 604800           # LLM 响应 / 仓库克隆缓存 TTL(7 天)
+  index_ttl_seconds: 604800     # 代码向量索引 TTL(7 天,与仓库缓存同周期)

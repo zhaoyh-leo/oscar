@@ -1,0 +1,32 @@
+# ---- Secrets (config.yaml 可提交 —— 它不含密钥,密钥只在 .env) ----
+.env
+.env.*
+!.env.example
+
+# ---- Personal / toolchain ----
+/.claude/
+.idea/
+.vscode/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+
+# ---- Runtime artifacts & caches ----
+/.oscar_cache/
+/clones/
+/output/
+__pycache__/
+*.py[cod]
+*.log
+
+# ---- Model assets (~3.6GB; fetch via scripts/download_models.py) ----
+/bert/
+
+# ---- Internal design docs (not for publication) ----
+/OSCAR_V1_Design.md
+/oscar_current_design.md
+/oscar_project_overview.md
