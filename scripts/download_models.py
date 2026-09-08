@@ -8,12 +8,9 @@ oscar/paper/vector_store.py)。模型资产体积大(数 GB),**不随仓库分�
 用法:
     python scripts/download_models.py                 # 只下 codebert-base
     python scripts/download_models.py --dry-run       # 只看计划,不联网
-    python scripts/download_models.py --also-graphcodebert
 
 说明:
 - codebert-base(≈1.9 GB,必需):代码块 embedding,FAISS 向量检索。
-- graphcodebert-base(≈1.7 GB,可选):仓库里无引用;仅在显式
-  --also-graphcodebert 时下载。
 - 下载失败(网络/墙)时,重试前可设置国内镜像:
       set HF_ENDPOINT=https://hf-mirror.com        (Windows cmd)
       export HF_ENDPOINT=https://hf-mirror.com     (bash)
@@ -28,9 +25,8 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _MODELS = {
-    # local_dir 目录名 -> (HF repo id, 体积提示, 是否必需)
-    "codebert-base": ("microsoft/codebert-base", "~1.9 GB", True),
-    "graphcodebert-base": ("microsoft/graphcodebert-base", "~1.7 GB", False),
+    # local_dir 目录名 -> (HF repo id, 体积提示)
+    "codebert-base": ("microsoft/codebert-base", "~1.9 GB"),
 }
 # 任意一个权重文件存在即视为该模型已下载完成(snapshot_download 幂等)
 _WEIGHT_MARKERS = (
@@ -45,14 +41,12 @@ def _already_downloaded(local_dir: Path) -> bool:
     return local_dir.is_dir() and any((local_dir / m).exists() for m in _WEIGHT_MARKERS)
 
 
-def _plan(include_graphcodebert: bool) -> list[tuple[str, str, str, bool]]:
+def _plan() -> list[tuple[str, str, str, bool]]:
     """(local_dir 名, repo id, 体积, 已下载) 列表 — 排序稳定。"""
-    out = []
-    for name, (repo_id, size, required) in _MODELS.items():
-        if name == "graphcodebert-base" and not include_graphcodebert:
-            continue
-        out.append((name, repo_id, size, _already_downloaded(_ROOT / "bert" / name)))
-    return out
+    return [
+        (name, repo_id, size, _already_downloaded(_ROOT / "bert" / name))
+        for name, (repo_id, size) in _MODELS.items()
+    ]
 
 
 def main() -> int:
@@ -61,17 +55,10 @@ def main() -> int:
         "--dry-run", action="store_true",
         help="只打印计划并退出(不联网、不 import huggingface_hub)",
     )
-    parser.add_argument(
-        "--also-graphcodebert", action="store_true",
-        help="额外下载 graphcodebert-base(仓库内无引用,默认不下)",
-    )
     args = parser.parse_args()
 
     ( _ROOT / "bert" ).mkdir(parents=True, exist_ok=True)
-    plan = _plan(args.also_graphcodebert)
-    if not plan:
-        print("Nothing to do: no model selected (add --also-graphcodebert to fetch the optional one).")
-        return 0
+    plan = _plan()
 
     for name, repo_id, size, done in plan:
         # 控制台编码差异下避免非 ASCII 破折号(cp936 会显示乱码)

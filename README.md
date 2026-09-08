@@ -129,7 +129,7 @@ git clone <this repository> && cd oscar
 pip install -r requirements.txt
 
 # Fetch the local embedding model (~1.9 GB, into bert/, git-ignored):
-python scripts/download_models.py            # add --also-graphcodebert for the optional model
+python scripts/download_models.py
 ```
 
 Set your API key in a `.env` file at the repository root (git-ignored; a

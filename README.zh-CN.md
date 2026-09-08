@@ -111,7 +111,7 @@ git clone <本仓库> && cd oscar
 pip install -r requirements.txt
 
 # 下载本地 embedding 模型(约 1.9GB,存到 bert/,已 gitignore):
-python scripts/download_models.py     # 加 --also-graphcodebert 下载可选模型
+python scripts/download_models.py
 ```
 
 在仓库根目录写 `.env`(已 gitignore;模板见 `.env.example`):
