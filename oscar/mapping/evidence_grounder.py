@@ -14,7 +14,10 @@ evidence_summary[:300](文件名列表)重写 explanation,证据永远停在文�
    与 explanation;
 4. 检索无命中 → 规则化 MISSING,不调 LLM 去「确认不存在」
    (幻觉高发区);LLM 失败 → 保留原证据、explanation 留痕标注、
-   confidence 封顶 —— 绝不静默吞错。
+   confidence 封顶 —— 绝不静默吞错;
+5. 大块兜底:初裁非 VERIFIED 时,把初窗文件全文再送 LLM 复核 ——
+   小块只露函数/类体,同文件散落(其他函数/模块级)的实现面是误报
+   INCOMPLETE/MISSING 的主源(小块优先、大块兜底,见 _whole_file_reground)。
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from oscar.prompts import (
     GROUNDING_DEGRADE_INSTRUCTION,
     GROUNDING_SYSTEM,
     build_grounding_user_prompt,
+    build_whole_file_grounding_prompt,
 )
 from oscar.models.schemas import (
     AuditFinding, AuditState, ClaimStatus, EvidenceDetail, GroundingVerdict,
@@ -63,6 +67,11 @@ _RARE_SLOTS = config.retrieval.rare_slots
 # 稀有内容词扫描专用槽位数(见 _assemble_candidate_chunks)
 _MAPPER_MIN = config.retrieval.mapper_min
 # mapper 候选文件块保底(与论文不同名的实现仅经此可达)
+# 大块兜底预算(小块优先、只在初裁「不完整」时整读文件复核;验证有效后再
+# 提升为 config.yaml retrieval 段可调项)
+_WHOLE_FILE_MAX_FILES = 3        # 整读文件数上限(初窗文件 + mapper 候选)
+_WHOLE_FILE_TOTAL_CHARS = 60000  # 全文合计字符预算
+_WHOLE_FILE_SKIP_CHARS = 40000   # 单文件超此长度不整读(其类级块初窗已覆盖)
 _VERDICT_STATUS = {
     "VERIFIED": ClaimStatus.VERIFIED,
     "INCOMPLETE": ClaimStatus.INCOMPLETE,
@@ -192,6 +201,30 @@ def ground_finding(
             (verdict.explanation or "")
             + " The verdict could not be anchored to any of the provided code "
             "chunks, so it is reported as UNCERTAIN."
+        ).strip()
+
+    # 大块兜底(小块优先、只在「实现不完整」时补):初裁非 VERIFIED → 整读
+    # 初窗文件全文复核。小块只露函数/类体,同文件其他函数/模块级实现面
+    # 从不入窗,是误报 INCOMPLETE/MISSING 的主源。复核成功以复核结果为准
+    # (重新裁决 + 全文内精确定位);失败/无文件可读 → 维持初裁。
+    revised = None
+    if status in (ClaimStatus.MISSING, ClaimStatus.INCOMPLETE, ClaimStatus.UNCERTAIN):
+        revised = _whole_file_reground(
+            finding, chunk_map, state, verdict, paper_context
+        )
+        if revised is not None:
+            status, grounded, verdict = revised
+    # 复核裁决同样必须锚得住(整文件上下文亦不豁免一致性守卫)
+    if (
+        revised is not None
+        and status in (ClaimStatus.VERIFIED, ClaimStatus.INCOMPLETE)
+        and not grounded
+    ):
+        status = ClaimStatus.UNCERTAIN
+        verdict.explanation = (
+            (verdict.explanation or "")
+            + " The verdict could not be anchored to the provided complete "
+            "files, so it is reported as UNCERTAIN."
         ).strip()
 
     new = finding.model_copy(deep=True)
@@ -361,6 +394,12 @@ def _call_grounding_llm(
                 _f.write("\t".join(parts) + "\n")
         except Exception:
             pass
+    return _structured_grounding_call(messages)
+
+
+def _structured_grounding_call(messages: list[dict]) -> Optional[GroundingVerdict]:
+    """One structured grounding call (shared by chunk pass and whole-file pass),
+    with the raw-JSON degrade fallback when function calling is unavailable."""
     try:
         result = llm_client.structured_output(GroundingVerdict, messages, temperature=0.1)
         if isinstance(result, GroundingVerdict):
@@ -378,6 +417,121 @@ def _call_grounding_llm(
         except Exception:
             pass
         return None
+
+
+def _whole_file_reground(
+    finding: AuditFinding,
+    chunk_map: dict[str, dict],
+    state: AuditState,
+    prior_verdict: GroundingVerdict,
+    paper_context: str = "",
+) -> Optional[tuple[ClaimStatus, list[EvidenceDetail], GroundingVerdict]]:
+    """整文件复核(大块兜底)。
+
+    文件集 = 初窗 chunk 所在文件(窗口序)+ mapper 候选文件,确定性去重、
+    按预算整读;LLM 按全文复核初裁;锚定行号由 snippet 在文件全文中的逐字
+    精确匹配反推(非 LLM 自报坐标,锚不上即弃 —— 宁缺毋假)。返回
+    ``(status, grounded_rows, verdict)``;无文件可读或复核调用失败返回 None,
+    调用方维持初裁。
+    """
+    files: list[str] = []
+    seen: set[str] = set()
+    for r in chunk_map.values():
+        fp = (r.get("file_path") or "").strip()
+        if fp and fp not in seen:
+            seen.add(fp)
+            files.append(fp)
+    for fp in _mapper_candidate_files(finding):
+        if fp and fp not in seen:
+            seen.add(fp)
+            files.append(fp)
+    if not files:
+        return None
+
+    repo_path = state.project.get("clone_path", "")
+    texts: list[tuple[str, str]] = []  # (manifest 风格路径, 全文)
+    total = 0
+    for fp in files:
+        if len(texts) >= _WHOLE_FILE_MAX_FILES:
+            break
+        if total >= _WHOLE_FILE_TOTAL_CHARS:
+            break
+        open_path = os.path.join(repo_path, fp.replace("\\", "/")) if repo_path else fp
+        try:
+            with open(open_path, encoding="utf-8") as fh:  # 文本模式 → \r\n 归一
+                content = fh.read()
+        except (OSError, UnicodeError):
+            continue
+        if len(content) > _WHOLE_FILE_SKIP_CHARS:
+            continue  # 超大文件不整读(其类级块已入初窗);预算留给小文件
+        if total + len(content) > _WHOLE_FILE_TOTAL_CHARS and texts:
+            break  # 放不下就不再塞半截文件
+        total += len(content)
+        texts.append((fp, content))
+    if not texts:
+        return None
+
+    files_text = [
+        f"[F{i + 1}] {fp} ({content.count(chr(10)) + 1} lines)\n"
+        f"```python\n{content}\n```"
+        for i, (fp, content) in enumerate(texts)
+    ]
+    user = build_whole_file_grounding_prompt(
+        project_name=state.project.get("name", ""),
+        repo_url=state.project.get("repository_url", ""),
+        claim_id=finding.claim_id,
+        category=finding.category.value,
+        statement=finding.statement,
+        paper_context=paper_context,
+        prior_status=prior_verdict.verdict,
+        prior_confidence=float(prior_verdict.confidence),
+        files_text=files_text,
+        max_locations=_MAX_LOCATIONS,
+    )
+    verdict = _structured_grounding_call(
+        [
+            {"role": "system", "content": GROUNDING_SYSTEM},
+            {"role": "user", "content": user},
+        ]
+    )
+    if verdict is None:
+        return None
+    status = _VERDICT_STATUS.get(verdict.verdict)
+    if status is None:
+        return None
+
+    grounded: list[EvidenceDetail] = []
+    seen_keys: set[tuple] = set()
+    for loc in verdict.locations or []:
+        if len(grounded) >= _MAX_LOCATIONS:
+            break
+        ref = (loc.chunk_ref or "").strip().upper()
+        if not ref.startswith("F") or not ref[1:].isdigit():
+            continue
+        idx = int(ref[1:]) - 1
+        if idx < 0 or idx >= len(texts):
+            continue
+        fp, content = texts[idx]
+        snippet = (loc.snippet or "").strip()
+        if len(snippet) < 8:
+            continue
+        pos = content.find(snippet)
+        if pos < 0:
+            continue  # 非逐字 → 弃,绝不用模糊坐标
+        line = content.count("\n", 0, pos) + 1
+        key = (fp, line)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        grounded.append(EvidenceDetail(
+            file_path=fp,
+            line_number=line,
+            line_end=line + snippet.count("\n"),
+            snippet=snippet[:240],
+            label=_symbol_label(None, None, fp),
+            code_explanation=(loc.what_it_does or "").strip(),
+        ))
+    return status, grounded, verdict
 
 
 def _symbol_label(class_name: Optional[str], function_name: Optional[str], file_path: str) -> str:

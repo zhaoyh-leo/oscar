@@ -59,7 +59,8 @@ _INDEX_TTL = config.cache.index_ttl_seconds  # 与仓库缓存同周期:超期�
 
 
 class CodeChunk:
-    """A single code chunk (child) with its parent file context."""
+    """A single code chunk: a function/class body (or whole file), sliced by
+    the manifest's line spans."""
 
     def __init__(
         self,
@@ -69,7 +70,6 @@ class CodeChunk:
         *,
         class_name: str = "",
         function_name: str = "",
-        parent_content: str = "",
         line_start: int = 0,
         line_end: int = 0,
     ):
@@ -78,7 +78,6 @@ class CodeChunk:
         self.content = content
         self.class_name = class_name
         self.function_name = function_name
-        self.parent_content = parent_content
         self.line_start = line_start
         self.line_end = line_end
 
@@ -260,7 +259,6 @@ class CodeVectorStore:
                     self.chunks.append(CodeChunk(
                         chunk_id=chunk_id, file_path=mod, content=body,
                         class_name=loc.class_name, function_name=name,
-                        parent_content=parent,
                         line_start=loc.line_start, line_end=loc.line_end,
                     ))
                 else:
@@ -268,7 +266,7 @@ class CodeVectorStore:
                     chunk_id = f"fn-{mod}-{name}"
                     self.chunks.append(CodeChunk(
                         chunk_id=chunk_id, file_path=mod, content=body,
-                        function_name=name, parent_content=parent,
+                        function_name=name,
                         line_start=loc.line_start, line_end=loc.line_end,
                     ))
 
@@ -280,7 +278,7 @@ class CodeVectorStore:
                 body = _slice_lines(parent, loc.line_start, loc.line_end) or f"class {cls}"
                 self.chunks.append(CodeChunk(
                     chunk_id=f"cls-{mod}-{cls}", file_path=mod, content=body,
-                    class_name=cls, parent_content=parent,
+                    class_name=cls,
                     line_start=loc.line_start, line_end=loc.line_end,
                 ))
 
@@ -293,7 +291,7 @@ class CodeVectorStore:
             content = file_contents.get(mod, "")
             self.chunks.append(CodeChunk(
                 chunk_id=f"file-{mod}", file_path=mod,
-                content=content or "", parent_content=content,
+                content=content or "",
                 line_start=1,
                 line_end=max(content.count("\n") + 1, 1),
             ))
@@ -303,7 +301,7 @@ class CodeVectorStore:
                 content = file_contents.get(f, "")
                 self.chunks.append(CodeChunk(
                     chunk_id=f"file-{f}", file_path=f,
-                    content=content[:500], parent_content=content,
+                    content=content[:500],
                 ))
 
         self._rebuild_bm25()
@@ -342,15 +340,14 @@ class CodeVectorStore:
         return np.concatenate(embs, axis=0)
 
     def _result(self, chunk: CodeChunk, score: float, source: str) -> dict:
-        """Unified retrieval result dict (content/parent_content included for
-        downstream LLM grounding; line spans for evidence locations)."""
+        """Unified retrieval result dict (content for downstream LLM
+        grounding; line spans for evidence locations)."""
         return {
             "chunk_id": chunk.chunk_id,
             "file_path": chunk.file_path,
             "class_name": chunk.class_name,
             "function_name": chunk.function_name,
             "content": chunk.content,
-            "parent_content": chunk.parent_content,
             "line_start": chunk.line_start,
             "line_end": chunk.line_end,
             "score": score,

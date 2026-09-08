@@ -340,8 +340,14 @@ def _llm_claim_extraction(
                 for i, item in enumerate(raw_items):
                     if not isinstance(item, dict):
                         continue
+                    # implementation 已退役(抽取 prompt 不再引导该类别);
+                    # LLM 越界输出时折入 release 交付承诺审计,绝不落入
+                    # core_method 审计被误判 MISSING。
+                    raw_category = item.get("category", "core_method")
+                    if raw_category == "implementation":
+                        raw_category = "release"
                     try:
-                        category = ClaimCategory(item.get("category", "core_method"))
+                        category = ClaimCategory(raw_category)
                     except ValueError:
                         category = ClaimCategory.CORE_METHOD
                     claims.append(

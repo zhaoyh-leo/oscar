@@ -48,13 +48,17 @@ class ClaimCategory(str, Enum):
     CHECKPOINT = "checkpoint"
     EXTERNAL_RESOURCE = "external_resource"
     LICENSE = "license"
+    # deprecated: 不再引导抽取、不参与计分;LLM 越界输出时由 analyzer 折入
+    # RELEASE(交付承诺审计)消费——绝不落入 core_method 被误审。
     IMPLEMENTATION = "implementation"
     RELEASE = "release"
 
 
 class ClaimSource(BaseModel):
     """Source of a claim."""
-    type: str = Field(description="Source type: paper, readme, or repository")
+    type: Literal["paper", "readme", "repository"] = Field(
+        description="Source type: paper, readme, or repository"
+    )
     location: str = Field(description="Location within the source, e.g. 'Section 3.2'")
     content: Optional[str] = Field(None, description="Extracted snippet")
 
@@ -63,7 +67,9 @@ class Evidence(BaseModel):
     """A piece of evidence supporting or refuting a claim."""
     evidence_id: str = Field(description="Unique evidence identifier, e.g. E-001")
     type: EvidenceType = Field(description="Type of evidence")
-    source: str = Field(description="Source identifier, e.g. 'github', 'paper', 'arxiv'")
+    source: Literal["github", "repository"] = Field(
+        description="Source identifier: 'github' (mapper) or 'repository' (planner/generator)"
+    )
     location: str = Field(description="Location of evidence, e.g. file path, URL, line number")
     content: str = Field(description="Content or summary of evidence")
     supports: list[str] = Field(default_factory=list, description="Claim IDs this evidence supports")
@@ -232,6 +238,11 @@ class AuditReport(BaseModel):
     project_name: str
     repository_url: str
     paper_title: Optional[str] = None
+    paper_provided: bool = Field(
+        default=False,
+        description="True when a paper was audited; False means claims were "
+        "derived from the repository's own README (self-description check)",
+    )
     executive_summary: str = ""
     findings: list[AuditFinding] = Field(default_factory=list)
     uncertain_findings: list[AuditFinding] = Field(default_factory=list)

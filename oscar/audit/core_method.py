@@ -7,8 +7,8 @@ from typing import Optional
 
 from oscar.mapping.claim_code_mapper import map_claim_to_code
 from oscar.models.schemas import (
-    AuditFinding, AuditState, Claim, ClaimCategory, ClaimStatus,
-    ClaimSource, Evidence, EvidenceDetail, EvidenceType, MappingResult, RepositoryManifest,
+    AuditFinding, AuditState, ClaimCategory, ClaimStatus,
+    Evidence, EvidenceDetail, EvidenceType, MappingResult,
 )
 
 
@@ -21,12 +21,11 @@ def audit_core_methods(state: AuditState) -> list[AuditFinding]:
     if not manifest:
         return findings
 
-    # Get core method claims
+    # Get core method claims. 自证兜底已删除:论文/README 没抽到 core_method
+    # claim 时不再从 manifest 类名现造 claim(类名 → 精确匹配恒 VERIFIED,
+    # repo-only 下构成「自己审自己」)。该维度无 claim 即无 finding、
+    # 不进计分——宁缺毋假。
     method_claims = [c for c in state.claims if c.category == ClaimCategory.CORE_METHOD]
-
-    # If no method claims from paper, generate from manifest
-    if not method_claims and manifest.classes:
-        method_claims = _generate_method_claims_from_manifest(manifest)
 
     for claim in method_claims:
         mapping = map_claim_to_code(claim, manifest, repo_path)
@@ -70,32 +69,6 @@ def audit_core_methods(state: AuditState) -> list[AuditFinding]:
         findings.append(finding)
 
     return findings
-
-
-def _generate_method_claims_from_manifest(manifest: RepositoryManifest) -> list[Claim]:
-    """Generate method claims from repository manifest classes."""
-    claims = []
-    counter = 1
-
-    for module_path, classes in manifest.classes.items():
-        for cls in classes:
-            # Skip common utility classes
-            if cls.lower() in ("config", "utils", "logger", "base", "loss"):
-                continue
-            claim = Claim(
-                claim_id=f"METHOD-M{counter:03d}",
-                category=ClaimCategory.CORE_METHOD,
-                statement=cls,  # Use the actual class name
-                source=ClaimSource(type="repository", location=module_path, content=f"class {cls}"),
-            )
-            claims.append(claim)
-            counter += 1
-            if counter > 20:
-                break
-        if counter > 20:
-            break
-
-    return claims
 
 
 def _build_mapping_evidence(mapping: MappingResult, repo_path: str) -> Optional[Evidence]:

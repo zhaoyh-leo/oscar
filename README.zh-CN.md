@@ -94,8 +94,9 @@ START → Repository Loader → Paper Resolver → Paper Analyzer →
 | `RESTRICTED` / `PLANNED` | 作者声明代码不能共享 / 后续会发布。 |
 
 Claim 类别:`core_method`、`training`、`inference`、`evaluation`、`demo`、
-`benchmark`、`api_interface`、`dataset`、`checkpoint`、`license`、
-`implementation`、`release`。
+`benchmark`、`api_interface`、`dataset`、`checkpoint`、`license`、`release`。
+`release`(交付承诺:"代码/权重/数据集将发布")在 Resources 维度按仓库实际
+交付物核验,列为 Informational、不计分。
 
 ## 环境要求
 
@@ -132,6 +133,10 @@ python main.py https://github.com/org/repo                          # 仅仓库
 python main.py https://github.com/org/repo --paper 2401.12345       # + 论文(URL 或 arXiv ID)
 python main.py https://github.com/org/repo --paper ... --output ./my_audit
 ```
+
+不传 `--paper` 时,claims 从仓库自身的 README 抽取——这次运行检查的是
+"仓库自述是否属实"(自我描述核对),而非对论文的忠实度;报告会明确标注
+这一点。
 
 | 参数 | 含义 |
 |---|---|
@@ -201,7 +206,6 @@ LLM 响应、论文 PDF/文本、仓库克隆、向量索引都在 `.oscar_cache
 - 克隆仓库、LLM 响应、论文 PDF、向量索引、模型权重、运行输出、内部设计文档
   全部 git-ignore,留在本地。除了审计本身请求的 GitHub 元数据和你配置的 LLM
   API 调用,不会上传任何东西。
-- 若密钥曾泄露进工作区,开源前**务必**到 provider 控制台轮换。
 
 ## 目录结构
 

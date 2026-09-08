@@ -52,7 +52,6 @@ CATEGORY_DISPLAY: Dict[str, str] = {
     "dataset": "Dataset",
     "benchmark": "Benchmark",
     "demo": "Demo / Examples",
-    "implementation": "Implementation",
     "api_interface": "API / Interface",
     "license": "License",
     "checkpoint": "Checkpoints / Pretrained Weights",
@@ -180,6 +179,7 @@ def generate_report(state: AuditState) -> AuditReport:
         project_name=project_name,
         repository_url=repo_url,
         paper_title=state.paper.title if state.paper else None,
+        paper_provided=state.paper is not None,
         executive_summary=exec_summary,
         findings=[f for f in findings if f.status not in
                   (ClaimStatus.UNCERTAIN, ClaimStatus.NOT_APPLICABLE)],
@@ -297,12 +297,19 @@ def _generate_executive_summary(
         lines.append(f"*{manifest.code_summary.project_summary}*")
         lines.append("")
 
+    # 无论文运行:claims 来自仓库自己的 README —— 明确标注,不冒充论文核对
+    if state.paper is None:
+        lines.append("*No paper was provided — claims are extracted from the "
+                     "repository's own README, so this run checks the repo's "
+                     "self-description, not paper fidelity.*")
+        lines.append("")
+
     if overall_score is not None:
         lines.append(f"**Overall Completeness Score:** {overall_score:.1f}%")
         lines.append("")
         lines.append("**Weighted across core implementation categories** "
                      "(core methods, training, inference, evaluation, dataset, "
-                     "benchmark, demo, implementation). Informational items "
+                     "benchmark, demo). Informational items "
                      "(API docs, licenses, external resources, checkpoints, "
                      "releases) are listed separately and do not affect the score.")
     else:
@@ -431,6 +438,9 @@ def save_markdown_report(report: AuditReport, output_path: str):
     lines.append(f"**Repository:** {report.repository_url}")
     if report.paper_title:
         lines.append(f"**Paper:** {report.paper_title}")
+    elif not report.paper_provided:
+        lines.append("**Paper:** not provided — claims are extracted from the "
+                     "repository's own README (self-description check)")
     lines.append("")
 
     lines.append(report.executive_summary)

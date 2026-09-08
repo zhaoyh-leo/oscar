@@ -23,7 +23,6 @@ CATEGORY_WEIGHTS: dict[ClaimCategory, float] = {
     ClaimCategory.INFERENCE: 2.0,
     ClaimCategory.BENCHMARK: 1.5,
     ClaimCategory.DEMO: 1.0,
-    ClaimCategory.IMPLEMENTATION: 1.0,
 }
 
 # 不计分、仅参考列出(license 作为独立警示项)
@@ -44,7 +43,6 @@ SCORED_DISPLAY_ORDER: list[ClaimCategory] = [
     ClaimCategory.DATASET,
     ClaimCategory.BENCHMARK,
     ClaimCategory.DEMO,
-    ClaimCategory.IMPLEMENTATION,
 ]
 
 INFO_DISPLAY_ORDER: list[ClaimCategory] = [
@@ -66,7 +64,6 @@ CODE_GROUNDED_CATEGORIES: set[ClaimCategory] = {
     ClaimCategory.DEMO,
     ClaimCategory.BENCHMARK,
     ClaimCategory.API_INTERFACE,
-    ClaimCategory.IMPLEMENTATION,
 }
 
 # 类别 → 检索查询补充词(statement 常只是类名/短语,补类别语义词提升 BM25 召回)
@@ -78,7 +75,6 @@ _CATEGORY_HINTS: dict[ClaimCategory, str] = {
     ClaimCategory.BENCHMARK: "benchmark experiment result",
     ClaimCategory.DEMO: "demo example visualization",
     ClaimCategory.API_INTERFACE: "api cli argument parser config interface",
-    ClaimCategory.IMPLEMENTATION: "",
 }
 
 

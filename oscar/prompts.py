@@ -74,13 +74,13 @@ Categories and statement requirements (statement ≤ 200 chars, one compact sent
 - dataset / benchmark: data contributions. Statement = "<Name>: what it is (domain, scale, task framing)". A constructed dataset/benchmark belongs HERE, not in core_method.
 - training: only training procedures that are not one of the paper's proposed method components (e.g. training schedule, pretraining protocol, hyperparameter practice).
 - inference / evaluation: evaluation protocol, metrics, or localization task framing the paper introduces.
-- implementation: engineering claims only (e.g. "code/weights will be released", reproducibility setup) — never for an architecture or model component.
-- demo / release / api_interface / license: only when the paper makes an explicit statement about them.
+- release: delivery promises about the released code and its assets (e.g. "code/weights will be released", reproducibility setup) — never for an architecture or model component.
+- demo / api_interface / license: only when the paper makes an explicit statement about them.
 
 Rules:
 - Only include contributions the paper itself makes or adopts as its framework (e.g. "we use a pair of weight-sharing ViT models with an MLP head"). Do NOT mine related-work names.
 - Every claim needs:
-  - category: one of core_method, training, inference, evaluation, demo, benchmark, api_interface, dataset, checkpoint, license, implementation, release
+  - category: one of core_method, training, inference, evaluation, demo, benchmark, api_interface, dataset, checkpoint, license, release
   - statement: as specified above (function-first, ≤200 chars)
   - location: where it appears (Abstract, Introduction, "Method §3.x", ...)
   - snippet: the verbatim paper sentence(s) backing the claim (≤ 350 chars) — keep the original wording, this is used as search context later
@@ -165,6 +165,61 @@ def build_grounding_user_prompt(
         f"an explanation of 2-4 sentences, and up to {max_locations} locations "
         "(each referencing a chunk ref above, with what_it_does and a verbatim "
         "snippet)."
+    )
+    return user_head + user_tail
+
+
+def build_whole_file_grounding_prompt(
+    *,
+    project_name: str,
+    repo_url: str,
+    claim_id: str,
+    category: str,
+    statement: str,
+    paper_context: str = "",
+    prior_status: str,
+    prior_confidence: float,
+    files_text: list[str],
+    max_locations: int,
+) -> str:
+    """整文件复核(大块兜底)user 提示词。
+
+    小块优先、大块兜底:初裁非 VERIFIED 时,把初窗涉及文件的全文交给
+    LLM 复核 —— 小块只露函数/类体,同文件散落(其他函数/模块级)的实现
+    面从不入窗,是误报 INCOMPLETE/MISSING 的主源;整文件一次带齐。
+    """
+    user_head = (
+        f"Project: {project_name}\n"
+        f"Repository: {repo_url}\n"
+        f"Claim ID: {claim_id} | Category: {category}\n"
+        f"Claim: {statement}\n"
+    )
+    if paper_context:
+        user_head += f"Paper context (verbatim source sentence of the claim): {paper_context}\n"
+    user_tail = (
+        f"A first pass judged this claim against partial code chunks "
+        f"({prior_status}, confidence {prior_confidence:.2f}). Below are the "
+        "COMPLETE files that pass looked at. Re-examine the claim against the "
+        "full files: implementation split across several functions or "
+        "module-level code in one file is now visible in one context.\n"
+        "If the complete files confirm the first verdict, confirm it; if they "
+        "reveal more of the claimed functionality, revise it. Base conclusions "
+        "ONLY on the code shown below.\n"
+        "- A stub, TODO, bare 'pass' body, or NotImplementedError is NOT an "
+        "implementation.\n"
+        "- Code identifiers and file names often differ from the paper's "
+        "naming; judge by whether the shown code implements the described "
+        "functionality — never answer MISSING merely because no symbol "
+        "matches the claim's name.\n"
+        f"- If you answer MISSING, briefly state what the shown files do "
+        "instead.\n\n"
+        f"Complete files:\n\n{chr(10).join(files_text)}\n\n"
+        "Answer with the structured result: an overall verdict "
+        "(VERIFIED / INCOMPLETE / MISSING / UNCERTAIN), a confidence in [0,1], "
+        f"an explanation of 2-4 sentences, and up to {max_locations} locations "
+        "(each referencing a file ref above — F1, F2, ... — with what_it_does "
+        "and a verbatim snippet copied exactly from the file, a few lines, "
+        "without line numbers)."
     )
     return user_head + user_tail
 

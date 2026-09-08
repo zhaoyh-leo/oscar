@@ -112,7 +112,9 @@ START → Repository Loader → Paper Resolver → Paper Analyzer →
 
 Claim categories: `core_method`, `training`, `inference`, `evaluation`,
 `demo`, `benchmark`, `api_interface`, `dataset`, `checkpoint`, `license`,
-`implementation`, `release`.
+`release`. Delivery promises (`release` — "code/weights/datasets will be
+released") are verified against the repository's actual artifacts under the
+Resources dimension and listed informational: they never affect the score.
 
 ## Requirements
 
@@ -152,6 +154,10 @@ python main.py https://github.com/org/repo                          # repo only
 python main.py https://github.com/org/repo --paper 2401.12345       # + paper (URL or arXiv ID)
 python main.py https://github.com/org/repo --paper ... --output ./my_audit
 ```
+
+Without `--paper`, claims are extracted from the repository's own README —
+the run checks the repo's self-description (is what it advertises actually
+there?) rather than fidelity to a paper; the report says so explicitly.
 
 | Flag | Meaning |
 |---|---|

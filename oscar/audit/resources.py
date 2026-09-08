@@ -1,7 +1,14 @@
-"""Dataset / Checkpoint / External Resources Audit.
+"""Dataset / Checkpoint / External Resources / Release Delivery Audit.
 
 Checks if external resources are documented, linked, and their access status is clear.
 Uses README content analysis for accurate URL and documentation detection.
+
+模块级检查(RES-DATASET / RES-CHECKPOINT / RES-EXTERNAL)之外,本节点消费
+「交付承诺」类 claim(release / implementation / dataset / checkpoint):
+论文/README 声称将发布代码/权重/数据集 → 按仓库物证(代码模块、权重文件
+与 README 下载 URL、数据集文件与 URL)裁决为 RELEASE 类 finding。此前这
+类 claim 抽取后无人消费:不产生 finding、不进 issue 调查,「代码/权重将
+发布」这类最常不兑现的承诺在报告中完全无痕。
 """
 
 import os
@@ -37,6 +44,9 @@ def audit_resources(state: AuditState) -> list[AuditFinding]:
     external_finding = _check_external(manifest, repo_path, readme)
     findings.append(external_finding)
 
+    # Delivery-promise claims (release / implementation / dataset / checkpoint)
+    findings.extend(_audit_delivery_claims(state, manifest, readme))
+
     return findings
 
 
@@ -50,16 +60,34 @@ def _extract_urls_from_readme(readme: str) -> list[tuple[int, str]]:
     return urls
 
 
+# 文件路径/README URL 关键词(交付物证;模块级 RES-* 检查与新交付审计共用)
+_DATASET_FILE_KWS = ("dataset", "data")
+_DATASET_URL_KWS = ("dataset", "data", "download", "huggingface", "huggingface.co")
+_CKPT_FILE_KWS = (
+    "checkpoint", "weight", "pretrained", "model_zoo", "ckpt",
+    "model.pth", "safetensors",
+)
+_CKPT_URL_KWS = (
+    "checkpoint", "weight", "pretrained", "model", "huggingface.co",
+    "hf.co", "zenodo", "drive.google", "pan.baidu", "releases",
+)
+
+
+def _urls_matching(readme: str, keywords: tuple[str, ...]) -> list[tuple[int, str]]:
+    """README 中含任一关键词的 URL(带行号)。"""
+    out = []
+    for line_no, url in _extract_urls_from_readme(readme):
+        if any(kw in url.lower() for kw in keywords):
+            out.append((line_no, url))
+    return out
+
+
 def _check_datasets(manifest: RepositoryManifest, repo_path: str, readme: str) -> AuditFinding:
     """Check dataset documentation."""
-    dataset_files = [f for f in manifest.files if "dataset" in f.lower() or "data" in f.lower()]
+    dataset_files = [f for f in manifest.files if any(k in f.lower() for k in _DATASET_FILE_KWS)]
 
     # Extract dataset-related URLs from README
-    readme_urls = _extract_urls_from_readme(readme)
-    dataset_urls = []
-    for line_no, url in readme_urls:
-        if any(kw in url.lower() for kw in ["dataset", "data", "download", "huggingface", "huggingface.co"]):
-            dataset_urls.append((line_no, url))
+    dataset_urls = _urls_matching(readme, _DATASET_URL_KWS)
 
     details = []
     # Add dataset files as evidence
@@ -111,15 +139,10 @@ def _check_datasets(manifest: RepositoryManifest, repo_path: str, readme: str) -
 
 def _check_checkpoints(manifest: RepositoryManifest, repo_path: str, readme: str) -> AuditFinding:
     """Check checkpoint/pretrained model documentation."""
-    kw_files = [f for f in manifest.files if any(kw in f.lower() for kw in
-                                                 ["checkpoint", "weight", "pretrained", "model_zoo", "ckpt", "model.pth"])]
+    kw_files = [f for f in manifest.files if any(kw in f.lower() for kw in _CKPT_FILE_KWS)]
 
     # Extract checkpoint/model URLs from README
-    readme_urls = _extract_urls_from_readme(readme)
-    ckpt_urls = []
-    for line_no, url in readme_urls:
-        if any(kw in url.lower() for kw in ["checkpoint", "weight", "pretrained", "model", "huggingface.co"]):
-            ckpt_urls.append((line_no, url))
+    ckpt_urls = _urls_matching(readme, _CKPT_URL_KWS)
 
     details = []
     for f in kw_files[:5]:
@@ -195,3 +218,126 @@ def _check_external(manifest: RepositoryManifest, repo_path: str, readme: str) -
             evidence_summary="No external resource references found",
             explanation="No external resource references detected.",
         )
+
+
+# ---------------------------------------------------------------------------
+# Delivery-promise audit(release / implementation / dataset / checkpoint claims)
+# ---------------------------------------------------------------------------
+
+# 交付承诺类 claim 在此消费。core_method / api_interface / benchmark 的
+# claim 有各自的逐条审计主;license 由 license_audit 规则检查覆盖;均不
+# 在此重复审计。
+_DELIVERY_CATEGORIES = {
+    ClaimCategory.RELEASE,
+    ClaimCategory.IMPLEMENTATION,  # 抽取端已折入 RELEASE;此处兜底旧路径
+    ClaimCategory.DATASET,         # "dataset X is constructed" → 数据交付物
+    ClaimCategory.CHECKPOINT,      # "pretrained weights released" → 权重物证
+}
+
+# claim 语句 → 承诺交付物 分型词(statement 为英文,小写匹配)
+_WEIGHT_TERMS = ("weight", "checkpoint", "pretrained", "ckpt")
+_DATA_TERMS = ("dataset", "corpus")
+
+
+def _audit_delivery_claims(
+    state: AuditState,
+    manifest: RepositoryManifest,
+    readme: str,
+) -> list[AuditFinding]:
+    """Audit delivery-promise claims against repository artifacts.
+
+    「代码/权重/数据集将发布」——开源审计里最常不兑现的一类承诺。此前抽
+    取后无任何节点消费:不产 finding、不进 issue 调查(作者「稍后发布」的
+    PLANNED 证据链断掉)、报告完全无痕。此处按承诺的交付物找仓库物证:
+    code → python 模块;weights → 权重文件 + README 下载 URL;dataset →
+    数据集文件 + README URL。产出 RELEASE 类 finding(不计分,列于
+    Informational);MISSING/INCOMPLETE 因而进入 issue 调查 → 作者显式
+    「稍后发布」落为 PLANNED,形成闭环。
+    """
+    claims = [
+        c for c in (state.claims or [])
+        if c.category in _DELIVERY_CATEGORIES
+    ]
+    if not claims:
+        return []
+
+    findings = []
+    for claim in claims:
+        kinds = {"code"}
+        text = (claim.statement or "").lower()
+        if any(w in text for w in _WEIGHT_TERMS):
+            kinds.add("weights")
+        if any(w in text for w in _DATA_TERMS):
+            kinds.add("dataset")
+
+        details: list[EvidenceDetail] = []
+        hits: list[str] = []
+        for kind in sorted(kinds):
+            ev_details = _delivery_evidence(kind, manifest, readme)
+            if ev_details:
+                hits.append(kind)
+            details.extend(ev_details)
+
+        if len(hits) == len(kinds):
+            status, confidence = ClaimStatus.VERIFIED, 0.85
+        elif hits:
+            status, confidence = ClaimStatus.INCOMPLETE, 0.6
+        else:
+            status, confidence = ClaimStatus.MISSING, 0.4
+
+        promised = ", ".join(sorted(kinds))
+        findings.append(AuditFinding(
+            claim_id=claim.claim_id,
+            category=ClaimCategory.RELEASE,
+            statement=claim.statement,
+            status=status,
+            confidence=confidence,
+            evidence_summary=(
+                f"Promised: {promised}. Artifacts found: {', '.join(hits) or 'none'}"
+            ),
+            evidence_details=details,
+            explanation=(
+                f"The claim promises delivery of: {promised}. "
+                + (
+                    f"Repository artifacts confirm: {', '.join(hits)}."
+                    if hits else
+                    "No repository artifacts match the promised deliverables."
+                )
+            ),
+        ))
+    return findings
+
+
+def _delivery_evidence(
+    kind: str, manifest: RepositoryManifest, readme: str
+) -> list[EvidenceDetail]:
+    """Return repository artifact evidence for one promised deliverable."""
+    details: list[EvidenceDetail] = []
+    if kind == "code":
+        for f in manifest.python_modules[:5]:
+            details.append(EvidenceDetail(file_path=f, label="code module"))
+        return details
+    if kind == "weights":
+        for f in [
+            f for f in manifest.files
+            if any(k in f.lower() for k in _CKPT_FILE_KWS)
+        ][:5]:
+            details.append(EvidenceDetail(file_path=f, label="checkpoint/weight file"))
+        for line_no, url in _urls_matching(readme, _CKPT_URL_KWS)[:5]:
+            details.append(EvidenceDetail(
+                file_path="README.md", line_number=line_no,
+                snippet=url[:200], label="model download URL",
+            ))
+        return details
+    # dataset
+    for f in [
+        f for f in manifest.files
+        if any(k in f.lower() for k in _DATASET_FILE_KWS)
+    ][:5]:
+        details.append(EvidenceDetail(file_path=f, label="dataset file"))
+    for line_no, url in _urls_matching(readme, _DATASET_URL_KWS)[:5]:
+        details.append(EvidenceDetail(
+            file_path="README.md", line_number=line_no,
+            snippet=url[:200], label="dataset download URL",
+        ))
+    return details
